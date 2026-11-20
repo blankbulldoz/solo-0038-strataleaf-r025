@@ -145,6 +145,42 @@ def run(flow):
                           "duplicate": rejected(lambda: db.transfer.import_lines("copy_segments", exported["lines"]), Conflict)}
                 if len(db.query("copy_segments").records) != 6:
                     raise RuntimeError("logical import differs")
+            elif flow == "bulk":
+                db.indexes.create("segments", "unique_code", "code", unique=True)
+                east = {"field": "region", "op": "eq", "value": "east"}
+                west = {"field": "region", "op": "eq", "value": "west"}
+                moved = db.update_where("segments", east, {"region": "north", "code": None}, request_key="move_east")
+                replay = db.update_where("segments", east, {"region": "north", "code": None}, request_key="move_east")
+                misuse = rejected(lambda: db.update_where("segments", east, {"region": "south"}, request_key="move_east"), Conflict)
+                bad_schema = rejected(lambda: db.update_where("segments", west, {"sequence": "high"}), InvalidDocument)
+                clash = rejected(lambda: db.update_where("segments", west, {"code": "c1"}), Conflict)
+                untouched = db.get("segments", "seg_03").document
+                removed = db.delete_where("segments", {"field": "region", "op": "eq", "value": "north"})
+                idle = db.delete_where("segments", {"field": "sequence", "op": "gt", "value": 1000})
+                origins = [item["origin"] for item in db.feed.read(first) if "origin" in item]
+                if moved.keys != ("seg_00", "seg_02", "seg_04") or moved.count != 3:
+                    raise RuntimeError("bulk update affected keys differ")
+                if not replay.replayed or replay.revision != moved.revision or replay.keys != moved.keys:
+                    raise RuntimeError("bulk replay did not return the original commit")
+                if untouched != {"region": "west", "sequence": 3, "code": "c3"}:
+                    raise RuntimeError("rejected bulk writes changed documents")
+                if db.get("segments", "seg_00") is not None or db.get("segments", "seg_00", moved.revision) is None:
+                    raise RuntimeError("bulk delete did not preserve history")
+                if idle.revision is not None or idle.count != 0 or db.revision != removed.revision:
+                    raise RuntimeError("empty bulk match must not commit")
+                db.catalog.create("capacity")
+                filler = db.batch()
+                for index in range(10000):
+                    filler.put("capacity", f"doc_{index:05}", {"n": index})
+                filler.commit()
+                head = db.batch().put("capacity", "doc_10000", {"n": 10000}).commit().revision
+                over_capacity = rejected(lambda: db.update_where("capacity", None, {"n": -1}), InvalidDocument)
+                if db.revision != head or db.get("capacity", "doc_00042").document != {"n": 42}:
+                    raise RuntimeError("over-capacity bulk write partially committed")
+                output = {"moved": moved.__dict__, "replay": replay.__dict__, "request_key_misuse": misuse,
+                          "schema_rejection": bad_schema, "unique_rejection": clash, "untouched": untouched,
+                          "removed": removed.__dict__, "idle": idle.__dict__, "commit_origins": origins,
+                          "over_capacity": over_capacity}
             else:
                 raise ValueError("unknown example workflow: " + flow)
             print(json.dumps({"workflow": flow, "result": output}, ensure_ascii=False, sort_keys=True, default=str))

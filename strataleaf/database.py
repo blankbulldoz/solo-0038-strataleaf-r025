@@ -1,5 +1,6 @@
 from .aggregate import Aggregates
 from .archive import Archives
+from .bulk import delete_where, update_where
 from .catalog import Catalog
 from .diagnostics import Diagnostics
 from .feeds import ChangeFeed
@@ -45,6 +46,12 @@ class Database:
 
     def patch(self, collection, key, patch, expected=None):
         return patch_document(self._store, collection, key, patch, expected)
+
+    def update_where(self, collection, predicate, patch, request_key=None):
+        return update_where(self._store, collection, predicate, patch, request_key)
+
+    def delete_where(self, collection, predicate, request_key=None):
+        return delete_where(self._store, collection, predicate, request_key)
 
     def checkpoint(self):
         return self._store.checkpoint()

@@ -29,13 +29,14 @@ with Database("strataleaf.db") as db:
 
 `python3 -m compileall -q strataleaf examples` 检查源码可编译。`python3 -m examples.workflows commit` 在独立临时目录运行多集合提交、重复请求和回滚示例，打印实际结果后自动清理。可用示例名：
 
-`catalog schema commit snapshot query index feed backup replica compact expire aggregate patch inspect transfer`
+`catalog schema commit snapshot query index feed backup replica compact expire aggregate patch inspect transfer bulk`
 
 每个示例约一秒以内，不需要联网。它们是生产 API 的有限工作流演示；自动化测试仍为 **deferred**，仓库不含测试套件，也不声明测试命令。`examples.observations` 另外提供写锁竞争与保留水位的可复现观测。
 
 ## 语义边界
 
 - 一个批次 1–10000 个操作，每个集合/键只能出现一次，多集合版本与索引、变更日志一同原子提交。唯一索引逐操作立即约束，交换两个已占用唯一值需先释放；基线不提供延迟唯一约束。
+- `update_where`/`delete_where` 按谓词对当前文档整组更新或删除：筛选与写入在同一个 IMMEDIATE 事务内完成，其他连接不能在中间改写或插入匹配项，结果一次返回受影响键、提交修订与计数，提交负载记录筛选谓词与补丁来源。匹配数超过批次容量 10000 时不写入任何内容，并报告实际匹配数；空匹配不产生提交与回执。模式或唯一约束冲突整组回滚；请求键幂等回放返回原回执，受影响键从保留的提交日志恢复。
 - 当前目录模式约束未来写入；模式收紧先扫描当前可见文档，不重写历史。目录变动独立于文档修订，使用目录 epoch；旧文档读取消费其原始 JSON。
 - 读取固定修订号，删除写入墓碑。TTL 是显式 `retention.sweep(now)` 产生删除提交；时间经过本身不会改变读取结果。到期前版本仍能读取。
 - 查询支持嵌套布尔谓词与等值、范围、集合成员、存在性判断，按文档键升序分页。签名游标固定集合、谓词、读版本与键边界，可调整页大小。索引只服务当前版本；历史读取回退版本扫描，最终谓词始终复核。
